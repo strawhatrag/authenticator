@@ -4,8 +4,8 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-var md5 = require("md5");
-
+const bcrypt = require("bcrypt");
+const saltRounds = 10; // bcrypt salt
 const app = express();
 
 app.use(express.static("public"));
@@ -29,18 +29,32 @@ app.get("/", (req, res) => {
 app.get("/login", (req, res) => {
   res.render("login");
 });
+
 app.post("/login", async (req, res) => {
   const uname = req.body.username;
-  const pswd = md5(req.body.password); // should have the same hash
+  const pswd = req.body.password;
 
-  let user = await User.findOne({ email: uname });
-  if (user && user.password == pswd) {
-    console.log("valid user");
-  } else {
-    console.error("username or password incorrect");
+  try {
+    const user = await User.findOne({ email: uname });
+
+    if (!user) {
+      // User not found
+      return res.status(401).send("Username or password incorrect");
+    }
+
+    const isValidPassword = await bcrypt.compare(pswd, user.password);
+
+    if (isValidPassword) {
+      // Password matches, valid user
+      res.render("secrets"); // Assuming "secrets" is a valid template/view to render after successful login.
+    } else {
+      // Invalid password
+      res.status(401).send("Username or password incorrect");
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("An error occurred while logging in.");
   }
-
-  res.render("secrets");
 });
 
 //register
@@ -49,13 +63,20 @@ app.get("/register", (req, res) => {
 });
 
 app.post("/register", async (req, res) => {
-  const newUser = new User({
-    email: req.body.username,
-    password: md5(req.body.password), //encryption
-  });
+  try {
+    const hashedPassword = await bcrypt.hash(req.body.password, saltRounds);
 
-  await newUser.save();
-  res.render("secrets");
+    const newUser = new User({
+      email: req.body.username,
+      password: hashedPassword, // Store the hashed password in the database
+    });
+
+    await newUser.save();
+    res.render("secrets"); // Assuming "secrets" is a valid template/view to render after successful registration.
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("An error occurred while registering the user.");
+  }
 });
 
 app.listen(3000, () => {
