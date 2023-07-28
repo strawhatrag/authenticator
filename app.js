@@ -8,6 +8,9 @@ const session = require("express-session");
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
 const app = express();
+// GOOGLE OAUTH
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const findOrCreate = require("mongoose-findorcreate");
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
@@ -36,19 +39,75 @@ const userSchema = new mongoose.Schema({
 });
 
 userSchema.plugin(passportLocalMongoose);
-
+userSchema.plugin(findOrCreate);
 const User = mongoose.model("User", userSchema);
 
 // CHANGE: USE "createStrategy" INSTEAD OF "authenticate"
 passport.use(User.createStrategy());
 
-// use static serialize and deserialize of model for passport session support
-passport.serializeUser(User.serializeUser()); // close cookie
-passport.deserializeUser(User.deserializeUser()); // open cookie
+passport.serializeUser(function (user, cb) {
+  process.nextTick(function () {
+    return cb(null, user.id); // Serialize only the user's id
+  });
+});
+
+passport.deserializeUser(function (id, cb) {
+  User.findById(id)
+    .then((user) => {
+      cb(null, user);
+    })
+    .catch((err) => {
+      cb(err);
+    });
+});
+
+// google oauth
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.CLIENT_ID,
+      clientSecret: process.env.CLIENT_SECRET,
+      callbackURL: "http://localhost:3000/auth/google/authenticator",
+      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
+    },
+    function (accessToken, refreshToken, profile, cb) {
+      // Check if the profile object has the necessary data
+      if (!profile || !profile.displayName) {
+        return cb(new Error("Invalid Google profile data"));
+      }
+
+      // Use the displayName as the username
+      const username = profile.displayName;
+
+      // Find or create the user using the username
+      User.findOrCreate(
+        { googleId: profile.id, username: username },
+        function (err, user) {
+          return cb(err, user);
+        }
+      );
+    }
+  )
+);
 
 app.get("/", (req, res) => {
   res.render("home");
 });
+
+//return statement to initiate the authentication process. Without it, the authentication process will not be triggered
+app.get(
+  "/auth/google",
+  passport.authenticate("google", { scope: ["profile"] })
+);
+
+app.get(
+  "/auth/google/authenticator",
+  passport.authenticate("google", { failureRedirect: "/login" }),
+  function (req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
+  }
+);
 
 //login
 app.get("/login", (req, res) => {
